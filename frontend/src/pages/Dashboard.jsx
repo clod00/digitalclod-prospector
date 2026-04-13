@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Filter, RefreshCw } from 'lucide-react'
+import { Filter, RefreshCw, Mail } from 'lucide-react'
 import KpiCards from '../components/KpiCards'
 import LeadTable from '../components/LeadTable'
 import LeadDrawer from '../components/LeadDrawer'
@@ -18,6 +18,7 @@ export default function Dashboard() {
   const [selectedLead, setSelectedLead] = useState(null)
   const [selectedIds, setSelectedIds] = useState([])
   const [enrichProgress, setEnrichProgress] = useState(null)
+  const [emailProgress, setEmailProgress] = useState(null) // { phase, done, total, found, current, msg }
 
   // Filters
   const [tierFilter, setTierFilter] = useState(null)
@@ -107,6 +108,46 @@ export default function Dashboard() {
     }
   }
 
+  const handleFindEmailsHot = async () => {
+    setEmailProgress({ phase: 'start', done: 0, total: 0, found: 0, current: '' })
+
+    try {
+      const response = await fetch(`${BASE_API}/api/email-scrape/hot`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        const chunk = decoder.decode(value)
+        const lines = chunk.split('\n').filter(l => l.startsWith('data: '))
+        for (const line of lines) {
+          try {
+            const json = JSON.parse(line.replace('data: ', ''))
+            if (json.error) { alert('Errore: ' + json.error); break }
+            setEmailProgress(prev => {
+              if (json.phase === 'start') return { ...prev, total: json.total, skipped_food: json.skipped_food, found: 0 }
+              if (json.phase === 1) return { ...prev, done: json.done, total: json.total, current: json.current }
+              if (json.phase === 2) return { ...prev, current: json.msg, googleBatch: true }
+              if (json.phase === 'done') return { ...prev, phase: 'done', found: json.found, total: json.total }
+              if (json.found_id) return { ...prev, found: (prev.found || 0) + 1 }
+              return prev
+            })
+          } catch (_) {}
+        }
+      }
+    } catch (err) {
+      alert('Errore: ' + err.message)
+    } finally {
+      handleRefresh()
+      setTimeout(() => setEmailProgress(null), 4000)
+    }
+  }
+
   const handleLeadUpdate = (updated) => {
     setLeads(prev => prev.map(l => l.id === updated.id ? updated : l))
     if (selectedLead?.id === updated.id) setSelectedLead(updated)
@@ -179,6 +220,15 @@ export default function Dashboard() {
         <div className="flex items-center gap-2">
           <span className="text-xs text-text-secondary">{total} leads</span>
           <button
+            onClick={handleFindEmailsHot}
+            disabled={!!emailProgress}
+            title="Trova email per tutti i lead Hot (esclude food)"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-surface border border-border text-text-secondary hover:border-amber/50 hover:text-amber disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors"
+          >
+            <Mail className="w-3.5 h-3.5" />
+            Trova Email Hot
+          </button>
+          <button
             onClick={handleRefresh}
             className="p-2 text-text-secondary hover:text-text-primary transition-colors rounded-lg hover:bg-surface-2"
           >
@@ -226,6 +276,43 @@ export default function Dashboard() {
         onClear={() => setSelectedIds([])}
         enrichProgress={enrichProgress}
       />
+
+      {/* Email scrape progress bar */}
+      {emailProgress && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-surface-2 border border-border rounded-2xl shadow-2xl px-5 py-3 flex items-center gap-4 min-w-[380px] max-w-[520px]">
+          <Mail className="w-4 h-4 text-amber shrink-0" />
+          <div className="flex-1 min-w-0">
+            {emailProgress.phase === 'done' ? (
+              <p className="text-sm font-medium text-text-primary">
+                Trovate <span className="text-amber">{emailProgress.found}</span> email su {emailProgress.total} lead Hot
+                {emailProgress.skipped_food > 0 && (
+                  <span className="text-text-secondary text-xs ml-1">({emailProgress.skipped_food} food saltati)</span>
+                )}
+              </p>
+            ) : (
+              <>
+                <p className="text-sm font-medium text-text-primary truncate">
+                  {emailProgress.current || 'Avvio ricerca email...'}
+                </p>
+                {emailProgress.total > 0 && (
+                  <>
+                    <div className="mt-1 h-1.5 bg-border rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-amber transition-all duration-300 rounded-full"
+                        style={{ width: `${Math.round(((emailProgress.done || 0) / emailProgress.total) * 100)}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-text-secondary mt-0.5">
+                      {emailProgress.done || 0}/{emailProgress.total}
+                      {emailProgress.found > 0 && <span className="text-amber ml-2">· {emailProgress.found} trovate</span>}
+                    </p>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Lead drawer */}
       {selectedLead && (

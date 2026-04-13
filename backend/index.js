@@ -7,6 +7,8 @@ const enrichRouter = require('./routes/enrich');
 const aiRouter = require('./routes/ai');
 const exportRouter = require('./routes/export');
 const importRouter = require('./routes/import');
+const discoverRouter = require('./routes/discover');
+const emailScrapeRouter = require('./routes/emailScrape');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -30,6 +32,8 @@ app.use('/api/enrich', enrichRouter);
 app.use('/api/ai', aiRouter);
 app.use('/api/export', exportRouter);
 app.use('/api/import', importRouter);
+app.use('/api/discover', discoverRouter);
+app.use('/api/email-scrape', emailScrapeRouter);
 
 app.use((err, req, res, next) => {
   console.error(err.stack);
