@@ -2,9 +2,10 @@
  * emailFinder.js
  * Cascata economica per trovare email di lead B2B italiani:
  *   1. Scraping homepage (gratis)
- *   2. Scraping /contatti (gratis)
+ *   2. Scraping /contatti + altre pagine (gratis)
  *   3. Pattern guess: info@dominio.it (gratis)
- *   4. Google via Apify — solo per lead SENZA sito web (~$0.003/query)
+ *   4. Domain guessing dal nome azienda — solo per lead senza sito (gratis)
+ *   5. Google via Apify — per lead rimasti senza email (~$0.003/query)
  */
 
 const { checkWebsite, checkContactPage } = require('./websiteCheck');
@@ -29,7 +30,6 @@ function isFood(lead) {
 
   if (FOOD_SETTORI.some(s => settore.includes(s))) return true;
 
-  // Word-boundary check per evitare falsi positivi (es. "Scarpe Bar" = falso)
   for (const kw of FOOD_KEYWORDS) {
     const idx = name.indexOf(kw);
     if (idx === -1) continue;
@@ -61,10 +61,75 @@ function extractEmailsFromText(text) {
   );
 }
 
-// ── Step 1–3: metodi gratuiti ──────────────────────────────────────────────────
+// ── Domain guessing dal nome azienda ──────────────────────────────────────────
+
+const LEGAL_RE = /\b(s\.?r\.?l\.?s?|s\.?p\.?a\.?|s\.?a\.?s\.?|s\.?n\.?c\.?|studio|dott\.?|avv\.?|ing\.?|arch\.?|geom\.?|di|del|della|dello|degli|e|&)\b/gi;
+
+function guessDomainsFromName(ragioneSociale) {
+  if (!ragioneSociale) return [];
+
+  const cleaned = ragioneSociale
+    .toLowerCase()
+    // Remove accents (normalize NFD then strip combining marks)
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(LEGAL_RE, ' ')
+    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const words = cleaned.split(' ').filter(w => w.length >= 3);
+  if (!words.length) return [];
+
+  const candidates = [];
+  const seen = new Set();
+  const add = (d) => { if (!seen.has(d)) { seen.add(d); candidates.push(d); } };
+
+  // All words joined (es. "officinerossi.it")
+  if (words.length >= 2) add(words.join('') + '.it');
+  // First word only (es. "officine.it")
+  add(words[0] + '.it');
+  // First two words joined (es. "officinerossi.it" — già coperto sopra se 2 words)
+  if (words.length >= 2) add(words[0] + words[1] + '.it');
+  // First two words with hyphen (es. "officine-rossi.it")
+  if (words.length >= 2) add(words[0] + '-' + words[1] + '.it');
+  // .com variant
+  add(words.join('') + '.com');
+
+  return candidates.slice(0, 5);
+}
+
+// Tenta di trovare email per lead SENZA sito_web, tramite domain guessing
+async function findEmailNoSite(lead) {
+  const domains = guessDomainsFromName(lead.ragione_sociale);
+
+  for (const domain of domains) {
+    try {
+      const siteData = await checkWebsite('https://' + domain);
+      if (!siteData.exists) continue;
+
+      // Sito trovato! Cerca email
+      if (siteData.emailsFound?.length > 0) {
+        return { email: siteData.emailsFound[0], source: 'sito_guessed', foundDomain: domain };
+      }
+
+      const contactEmails = await checkContactPage('https://' + domain);
+      if (contactEmails.length > 0) {
+        return { email: contactEmails[0], source: 'contatti_guessed', foundDomain: domain };
+      }
+
+      // Pattern fallback sul dominio trovato
+      return { email: `info@${domain}`, source: 'pattern_guessed', foundDomain: domain };
+    } catch (_) {}
+  }
+
+  return null; // Cade in Phase 2 Google
+}
+
+// ── Step 1–3: metodi gratuiti (con sito noto) ─────────────────────────────────
 
 async function findEmailCheap(lead) {
-  if (!lead.sito_web) return null;
+  // Senza sito → prova domain guessing prima
+  if (!lead.sito_web) return findEmailNoSite(lead);
 
   // 1. Scraping homepage
   try {
@@ -74,7 +139,7 @@ async function findEmailCheap(lead) {
     }
   } catch (_) {}
 
-  // 2. Scraping pagina contatti
+  // 2. Scraping pagina contatti (+ più percorsi)
   try {
     const contactEmails = await checkContactPage(lead.sito_web);
     if (contactEmails.length > 0) {
@@ -91,11 +156,17 @@ async function findEmailCheap(lead) {
   return null;
 }
 
-// ── Step 4: Google via Apify (solo lead senza sito) ───────────────────────────
+// ── Step 4: Google via Apify — query per trovare email in snippet ─────────────
 
 function buildGoogleEmailQuery(lead) {
   const city = lead.citta ? ` ${lead.citta}` : '';
   return `"${lead.ragione_sociale}"${city} email contatti`;
+}
+
+// Query separata per trovare il sito dell'azienda via Google
+function buildGoogleSiteQuery(lead) {
+  const city = lead.citta ? ` ${lead.citta}` : '';
+  return `${lead.ragione_sociale}${city}`;
 }
 
 function parseEmailFromGoogleResults(items) {
@@ -107,4 +178,12 @@ function parseEmailFromGoogleResults(items) {
   return null;
 }
 
-module.exports = { isFood, findEmailCheap, buildGoogleEmailQuery, parseEmailFromGoogleResults };
+module.exports = {
+  isFood,
+  findEmailCheap,
+  findEmailNoSite,
+  buildGoogleEmailQuery,
+  buildGoogleSiteQuery,
+  parseEmailFromGoogleResults,
+  guessDomainsFromName,
+};
