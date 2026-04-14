@@ -112,7 +112,7 @@ export default function Dashboard() {
     setEmailProgress({ phase: 'start', done: 0, total: 0, found: 0, current: '' })
 
     try {
-      const response = await fetch(`${BASE_API}/api/email-scrape/hot`, {
+      const response = await fetch(`${BASE_API}/api/email-scrape/hot-warm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       })
@@ -222,11 +222,11 @@ export default function Dashboard() {
           <button
             onClick={handleFindEmailsHot}
             disabled={!!emailProgress}
-            title="Trova email per tutti i lead Hot (esclude food)"
+            title="Trova email per tutti i lead Hot e Warm (esclude food e freddi)"
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-surface border border-border text-text-secondary hover:border-amber/50 hover:text-amber disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors"
           >
             <Mail className="w-3.5 h-3.5" />
-            Trova Email Hot
+            Trova Email Hot+Warm
           </button>
           <button
             onClick={handleRefresh}
@@ -284,7 +284,7 @@ export default function Dashboard() {
           <div className="flex-1 min-w-0">
             {emailProgress.phase === 'done' ? (
               <p className="text-sm font-medium text-text-primary">
-                Trovate <span className="text-amber">{emailProgress.found}</span> email su {emailProgress.total} lead Hot
+                Trovate <span className="text-amber">{emailProgress.found}</span> email su {emailProgress.total} lead Hot+Warm
                 {emailProgress.skipped_food > 0 && (
                   <span className="text-text-secondary text-xs ml-1">({emailProgress.skipped_food} food saltati)</span>
                 )}
